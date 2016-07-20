@@ -195,7 +195,7 @@ if __name__ == '__main__':
     town_state_path = os.path.join(DATA, 'town_state.csv')
 
     print('Loading data..')
-    df_train = load_data(path=DATA, file_name='train.csv', nrows=20**4)
+    df_train = load_data(path=DATA, file_name='train.csv', nrows=20**3)
     df_client = load_data(path=DATA, file_name='cliente_tabla.csv')
     df_prod = load_data(path=DATA, file_name='producto_tabla.csv')
     df_town = load_data(path=DATA, file_name='town_state.csv')
@@ -208,7 +208,7 @@ if __name__ == '__main__':
     y = df_train[target]
     X = df_train[indep_vars]
 
-    submit_to_kaggle = True
+    submit_to_kaggle = False
 
     print('\n\n----------------------')
     print('Finally, loading Kaggle test set to perform predictions...')

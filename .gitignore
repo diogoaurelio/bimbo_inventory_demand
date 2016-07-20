@@ -139,3 +139,33 @@ $RECYCLE.BIN/
 # Linux trash folder which might appear on any partition or disk
 .Trash-*
 
+
+logs
+
+project/project
+project/target
+target
+/.idea
+/.idea_modules
+/.classpath
+/.project
+/.settings
+/RUNNING_PID
+
+
+tmp
+.history
+dist
+/*.iml
+/out
+test-2.11
+app-2.11
+/project/*-shim.sbt
+*-shim.sbt
+
+*/.DS_Store
+npm_modules
+node-v4.1.0-windows-x86
+bower_components
+public/images
+notes.txt
