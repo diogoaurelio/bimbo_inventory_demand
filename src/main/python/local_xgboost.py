@@ -40,14 +40,16 @@ def xGBoostModelFit():
     submission.to_csv('submission.csv', index=False)
 
 
-def gbm_predict(X_train, y_train, X_test, y_test, indep_vars, grid_search=True,
+def gbm_predict(X_train, y_train, X_test, indep_vars, y_test=None, grid_search=True,
                 cv=True, verbose=True, cv_folds=5, scoring='roc_auc',
                 submit=False, version='001', y_label='Demanda_uni_equil',
-                ids=None):
+                ids=None, param_grid=None):
 
     # Train
     y_train_vec = np.array(y_train, dtype=np.float64)
-    model = train_gbm(X_train,  y_train_vec, grid_search=grid_search, verbose=verbose)
+    model = train_gbm(X_train,  y_train_vec, grid_search=grid_search,
+                      verbose=verbose, scoring=scoring,
+                      param_grid = param_grid, cv_folds=cv_folds)
     # predict on train
     if verbose:
         print('Starting predictions ...')
@@ -60,28 +62,37 @@ def gbm_predict(X_train, y_train, X_test, y_test, indep_vars, grid_search=True,
         # probability
         test_pred_prob = model.predict_proba(X_test)[:, 1]
 
-    if cv:
+    if cv and not submit:
         print('Cross validation')
         cv_score = cross_validation.cross_val_score(model, X_test,
                                                     y_test, cv=cv_folds,
                                                     scoring=scoring)
     if verbose and not submit:
         print("\nModel Report")
-        if scoring=='roc_auc':
+        if scoring == 'roc_auc':
             print("Accuracy : %.4g" % metrics.accuracy_score(X_test.values, test_pred))
             print("AUC Score (Train): %f" % metrics.roc_auc_score(X_test, test_pred_prob))
             if cv:
                 print("CV Score : Mean - %.7g | Std - %.7g | Min - %.7g | Max - %.7g"
                       % (np.mean(cv_score),np.std(cv_score),np.min(cv_score),np.max(cv_score)))
+        elif scoring == 'mean_squared_error':
+            # print(type(y_test)) #pandas Series w 300 rows
+            # print(type(test_pred)) # numpy array
+            mse = metrics.mean_squared_error(y_test.values, test_pred)  # multioutput='raw_values'
+            print("mean_squared_error : %.4g" % mse)
         # feature relevance
-        predictive_relavance = pd.Series(model.feature_importances_, indep_vars).sort_values(ascending=False)
-        predictive_relavance.plot(kind='bar', title='Feature relevance')
-        plt.ylabel('Feature relevance score')
+        if not grid_search:
+            predictive_relavance = pd.Series(model.feature_importances_, indep_vars).sort_values(ascending=False)
+            predictive_relavance.plot(kind='bar', title='Feature relevance')
+            plt.ylabel('Feature relevance score')
 
     if submit:
         print('Creating prediction file for Kaggle submission...')
         cols = ['id', y_label]
-        submission = pd.DataFrame({'id':ids, y_label: test_pred})
+        # Adjustmentsfor submission requirements
+        pred_adjusted = np.around(test_pred, decimals=0)
+        pred_adjusted[pred_adjusted < 0] = 0
+        submission = pd.DataFrame({'id':ids, y_label: pred_adjusted})
         submission = submission[cols]
         print(submission.head())
         submission_path = os.path.join(DATA, 'submission_gbm_{}.csv'.format(version))
@@ -94,6 +105,7 @@ def train_gbm(X_train,  y_train, type='regression', grid_search=False, verbose=T
               min_samples_split=None, min_samples_leaf=50, max_depth=8,
               max_features='sqrt', sub_sample=0.8, n_estimators=100,
               learning_rate=0.1, random_state=10, param_grid=None,
+              scoring='roc_auc', loss='quantile', cv_folds=5
               ):
     """
 
@@ -112,9 +124,9 @@ def train_gbm(X_train,  y_train, type='regression', grid_search=False, verbose=T
     :return:
             (model)
     """
-    n_samples = X_train.shape[0]
     if not min_samples_split:
-        min_samples_split = n_samples * .01 # prevent overfitting, general rule of thumb: 0.5 - 1%
+        n_samples = X_train.shape[0]
+        min_samples_split = n_samples * .01  # prevent overfitting, general rule of thumb: 0.5 - 1%
 
     if type == 'classification':
         gbm = GradientBoostingClassifier(
@@ -126,24 +138,24 @@ def train_gbm(X_train,  y_train, type='regression', grid_search=False, verbose=T
             min_samples_split=min_samples_split, min_samples_leaf=min_samples_leaf,
             max_depth=max_depth, max_features=max_features, learning_rate=learning_rate,
             n_estimators=n_estimators, subsample=sub_sample, random_state=random_state,
-            loss='ls'
+            loss=loss
         )
     model = gbm
     if grid_search:
         if not param_grid:
-            param_grid = {'n_estimators': range(20,81,10)}
+            param_grid = dict(n_estimators=range(20,201,10))
         model = GridSearchCV(
             estimator=gbm,
             param_grid=param_grid,
-            scoring='roc_auc',
+            scoring=scoring,
             n_jobs=4,
             iid=False,
-            cv=5)
+            cv=cv_folds)
     if verbose:
         print('Starting to train model...')
     model.fit(X_train, y_train)
     if grid_search and verbose:
-        print('Model Grid scores: {0}, best params: {1}, best score: {2}'
+        print('-> Model Grid scores: {0}; \n-> Best params: {1}; \n-> Best score: {2}'
               .format(model.grid_scores_, model.best_params_, model.best_score_))
     if verbose:
         print('Finished training.')
@@ -183,7 +195,7 @@ if __name__ == '__main__':
     town_state_path = os.path.join(DATA, 'town_state.csv')
 
     print('Loading data..')
-    df_train = load_data(path=DATA, file_name='train.csv', nrows=10**3)
+    df_train = load_data(path=DATA, file_name='train.csv', nrows=20**4)
     df_client = load_data(path=DATA, file_name='cliente_tabla.csv')
     df_prod = load_data(path=DATA, file_name='producto_tabla.csv')
     df_town = load_data(path=DATA, file_name='town_state.csv')
@@ -196,20 +208,27 @@ if __name__ == '__main__':
     y = df_train[target]
     X = df_train[indep_vars]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=123)
+    submit_to_kaggle = True
 
-    # w/o grid search
-    # gbm_10 = gbm_predict(X_train=X_train, y_train=y_train, X_test=X_test, y_test=np.array(y_test),
-    #                     indep_vars=indep_vars, grid_search=False, cv=True, verbose=True,
-    #                     cv_folds=5, scoring='mean_squared_error', y_label=target)
     print('\n\n----------------------')
     print('Finally, loading Kaggle test set to perform predictions...')
-    y_train_vec = np.array(y_train, dtype=np.float64)
-    y_test_vec = np.array(y_test, dtype=np.float64)
-    gbm_11 = gbm_predict(X_train=X_train, y_train=y_train, X_test=df_test,
-                         y_test=y_test, indep_vars=indep_vars, grid_search=False,
-                         cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error', submit=True, ids=ids,
-                         version='001', y_label=target)
+    # y_train_vec = np.array(y_train, dtype=np.float64)
+    # y_test_vec = np.array(y_test, dtype=np.float64)
+    param_grid = dict(n_estimators=range(20, 151, 10))
+    # MSE: 2609
+    if not submit_to_kaggle:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=123)
+        gbm_02 = gbm_predict(X_train=X_train, y_train=y_train, X_test=X_test,
+                             y_test=y_test, indep_vars=indep_vars, grid_search=True,
+                             cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error',
+                             submit=False, ids=ids, y_label=target,
+                             param_grid=param_grid)
+
+    ### TO Submit to Kaggle:
+    else:
+        gbm_12 = gbm_predict(X_train=X, y_train=y, X_test=df_test, indep_vars=indep_vars, grid_search=True,
+                             cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error', submit=True, ids=ids,
+                             version='002', y_label=target, param_grid=param_grid)
 
     # With XGBoost
     params = dict(
