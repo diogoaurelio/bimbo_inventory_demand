@@ -215,7 +215,7 @@ if __name__ == '__main__':
     y = df_train[target]
     X = df_train[indep_vars]
 
-    submit_to_kaggle = True
+    submit_to_kaggle = False
 
     print('\n\n----------------------')
     print('Finally, loading Kaggle test set to perform predictions...')
