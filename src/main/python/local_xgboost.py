@@ -3,13 +3,13 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.cross_validation import train_test_split
-
+from sklearn.preprocessing import Imputer
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor  #GBM algorithm
 import xgboost as xgb
 
 from sklearn import cross_validation, metrics   #Additional scklearn functions
 from sklearn.grid_search import GridSearchCV   #Perforing grid search
-
+from ml_metrics import rmsle
 import matplotlib.pylab as plt
 # for notebook:
 #%matplotlib inline
@@ -21,23 +21,30 @@ RESOURCES = os.path.join(MAIN, 'resources')
 DATA = os.path.join(RESOURCES, 'data')
 
 
-def xGBoostModelFit():
-    test_preds = np.zeros(test.shape[0])
+def xGBoost_predict(X_train, y_train, X_test, indep_vars=None,
+                    y_test=None, submit=False, params=None, version='001'):
+    test_preds = np.zeros(X_test.shape[0])
+    print('Loading train and test data into DMatrix..')
     xg_train = xgb.DMatrix(X_train, label=y_train)
     xg_test = xgb.DMatrix(X_test)
 
     watchlist = [(xg_train, 'train')]
     num_rounds = 100
-
-    xgclassifier = xgb.train(params, xg_train, num_rounds, watchlist, feval = evalerror, early_stopping_rounds= 20, verbose_eval = 10)
+    # feval = evalerror
+    print('Starting xgboost training..')
+    xgclassifier = xgb.train(params, xg_train, num_rounds, watchlist, early_stopping_rounds= 20, verbose_eval = 10)
     preds = xgclassifier.predict(xg_test, ntree_limit=xgclassifier.best_iteration)
-    print('RMSLE Score:', rmsle(y_test, preds))
-    fxg_test = xgb.DMatrix(test)
-    fold_preds = np.around(xgclassifier.predict(fxg_test, ntree_limit=xgclassifier.best_iteration), decimals = 1)
+    #print('y_test is NaN: {}'.format(np.any(np.isnan(y_test))))
+    #print('preds is NaN: {}'.format(np.any(np.isnan(preds))))
+    #imp = Imputer(missing_values='NaN', strategy='median', axis=1)
+    #new_y_test = imp.fit_transform(y_test)
+    #print('RMSLE Score:', metrics.mean_squared_error(y_test, preds))
+    fold_preds = np.around(xgclassifier.predict(xg_test, ntree_limit=xgclassifier.best_iteration), decimals=1)
     test_preds += fold_preds
-
-    submission = pd.DataFrame({'id':ids, 'Demanda_uni_equil': test_preds})
-    submission.to_csv('submission.csv', index=False)
+    if submit:
+        submission = pd.DataFrame({'id':ids, 'Demanda_uni_equil': test_preds})
+        submission_path = os.path.join(DATA, 'submission_xgbm_{}.csv'.format(version))
+        submission.to_csv(submission_path, index=False)
 
 
 def gbm_predict(X_train, y_train, X_test, indep_vars, y_test=None, grid_search=True,
@@ -195,7 +202,7 @@ if __name__ == '__main__':
     town_state_path = os.path.join(DATA, 'town_state.csv')
 
     print('Loading data..')
-    df_train = load_data(path=DATA, file_name='train.csv', nrows=20**4)
+    df_train = load_data(path=DATA, file_name='train.csv', nrows=50**4)
     df_client = load_data(path=DATA, file_name='cliente_tabla.csv')
     df_prod = load_data(path=DATA, file_name='producto_tabla.csv')
     df_town = load_data(path=DATA, file_name='town_state.csv')
@@ -216,29 +223,38 @@ if __name__ == '__main__':
     # y_test_vec = np.array(y_test, dtype=np.float64)
     param_grid = dict(n_estimators=range(20, 151, 10))
     # MSE: 2609
-    if not submit_to_kaggle:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=123)
-        gbm_02 = gbm_predict(X_train=X_train, y_train=y_train, X_test=X_test,
-                             y_test=y_test, indep_vars=indep_vars, grid_search=True,
-                             cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error',
-                             submit=False, ids=ids, y_label=target,
-                             param_grid=param_grid)
-
-    ### TO Submit to Kaggle:
-    else:
-        gbm_12 = gbm_predict(X_train=X, y_train=y, X_test=df_test, indep_vars=indep_vars, grid_search=True,
-                             cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error', submit=True, ids=ids,
-                             version='002', y_label=target, param_grid=param_grid)
 
     # With XGBoost
     params = dict(
         objective="reg:linear",
         eta=0.025,
-        max_depth=0.8,
+        max_depth=5,
         subsample=0.8,
         colsample_bytree=0.6,
-        silent=False,
+        silent=True,
     )
+    if not submit_to_kaggle:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=123)
+
+        # gbm_02 = gbm_predict(X_train=X_train, y_train=y_train, X_test=X_test,
+        #                      y_test=y_test, indep_vars=indep_vars, grid_search=True,
+        #                      cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error',
+        #                      submit=submit_to_kaggle, ids=ids, y_label=target,
+        #                      param_grid=param_grid)
+
+        xGBoost_predict(X_train, y_train, X_test, indep_vars=None,
+                        y_test=None, submit=submit_to_kaggle, params=params)
+
+    ### TO Submit to Kaggle:
+    else:
+        xGBoost_predict(X, y, df_test, indep_vars=None,
+                        y_test=None, submit=submit_to_kaggle, params=params,
+                        version='_001')
+        # gbm_12 = gbm_predict(X_train=X, y_train=y, X_test=df_test, indep_vars=indep_vars, grid_search=True,
+        #                      cv=False, verbose=True, cv_folds=5, scoring='mean_squared_error', submit=True, ids=ids,
+        #                      version='002', y_label=target, param_grid=param_grid)
+
+
 
 
 

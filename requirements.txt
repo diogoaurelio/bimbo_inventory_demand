@@ -5,3 +5,5 @@ pandas
 matplotlib
 azureml
 azure
+ml_metrics
+sklearn
